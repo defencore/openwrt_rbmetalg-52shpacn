@@ -8,3 +8,14 @@
  	mikrotik,routerboard-wap-g-5hact2hnd|\
  	mikrotik,routerboard-wapr-2nd)
  		ucidef_set_interface_lan "eth0"
+@@ -102,6 +103,10 @@
+ 		ucidef_set_network_device_mac "lan4" "$(macaddr_add $mac_base 4)"
+ 		ucidef_set_network_device_mac "lan5" "$(macaddr_add $mac_base 5)"
+ 		;;
++	mikrotik,routerboard-metal-52ac)
++		label_mac=$mac_base
++		ucidef_set_network_device_mac "eth0" "$mac_base"
++		;;
+ 	*)
+ 		label_mac="$mac_base"
+ 		wan_mac="$mac_base"

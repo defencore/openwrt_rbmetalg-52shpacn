@@ -2,6 +2,8 @@
 
 <img width="3692" height="1063" alt="1190_hi_res" src="https://github.com/user-attachments/assets/1707d9e1-7594-4b76-bc65-3e24bccce30f" />
 https://mikrotik.com/product/RBMetalG-52SHPacn
+https://openwrt.org/inbox/toh/mikrotik/rbmetalg-52shpacn
+
 
 ## Specification
 <img width="1199" height="1133" alt="image" src="https://github.com/user-attachments/assets/de0e7103-1c74-4c35-8c14-87f284ad56a7" />
@@ -38,7 +40,8 @@ git checkout v25.12.4    # pin to the release, not main
 ## 3. Apply this bundle
 
 ``` bash
-metal_52ac="/path/to/metal-52ac-openwrt"
+git clone https://github.com/defencore/openwrt_rbmetalg-52shpacn
+metal_52ac=$(realpath openwrt_rbmetalg-52shpacn/)
 
 # drop-in files (DTS, kernel patch, init scripts, hotplug hook)
 cp -r ${metal_52ac}/files/. .
@@ -65,9 +68,10 @@ make menuconfig
 #   Target System            -> Atheros ATH79
 #   Subtarget                -> MikroTik devices
 #   Target Profile           -> MikroTik RouterBOARD Metal 52 ac
-#
-#   Make sure CONFIG_ATH10K_LEDS is enabled (it is required for the chip
-#   GPIO/LED patch; it lives under the mainline kmod-ath10k driver).
+#   Kernel modules  --->
+#     Wireless Drivers  --->
+#       [*] Enable LED support
+#       < > kmod-ath9k
 
 # force the DTB to rebuild after DTS/patch changes
 make target/linux/clean

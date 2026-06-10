@@ -10,15 +10,19 @@
  *
  * GPIO map verified live on hardware:
  *   gpio  1  - reset button (active low)
- *   gpio  4  - piezo beeper
+ *   gpio  4  - piezo beeper (passive; driven by a gpioset square wave)
  *   gpio 11  - MDIO (bit-banged)
  *   gpio 12  - MDC  (bit-banged)
  *   gpio 16  - ethernet status LED (active low: lit when line is low)
  *   gpio 18  - NOR power/enable: MUST stay high. Driving it low kills SPI
  *              access to the flash. Held high by gpio-hog below; do NOT use.
  *
- * Signal-strength LED bar is NOT on discrete GPIO (shift register / radio
- * driven) and is therefore not represented here.
+ * The WiFi LED and the 4-segment signal-strength bar are wired to the QCA9887
+ * radio chip's own GPIOs (see the ath10k-leds node), not the SoC.
+ *
+ * A ZT2046Q (ADS7846/XPT2046-compatible 12-bit SPI ADC) on SPI CS1 provides
+ * temperature and input-voltage sensing (see the adc@1 node). It is bound to
+ * spidev and read from user space.
  */
 
 #include "qca955x.dtsi"
@@ -146,6 +150,7 @@
 
 &spi {
 	status = "okay";
+	num-cs = <2>;
 
 	flash@0 {
 		compatible = "jedec,spi-nor";
@@ -196,6 +201,21 @@
 			};
 		};
 	};
+
+	/*
+	 * ZT2046Q (ADS7846/XPT2046-compatible 12-bit SPI ADC) used by the board
+	 * for temperature and input-voltage sensing. It sits on the second SPI
+	 * chip-select (CS1). The PENIRQ/pendown line is not wired (the chip is
+	 * used only for sensing, not touch), so the in-kernel ads7846 driver is
+	 * not usable here; instead expose it via spidev and read it from user
+	 * space. The "rohm,dh2228fv" compatible is the conventional way to bind
+	 * spidev to a node without a dedicated driver.
+	 */
+	adc@1 {
+		compatible = "rohm,dh2228fv";
+		reg = <1>;
+		spi-max-frequency = <2000000>;
+	};
 };
 
 &pcie0 {
@@ -206,11 +226,10 @@
 		reg = <0 0 0 0 0>;
 
 		/*
-		 * The signal-strength LED bar is wired to GPIOs of the QCA9887
-		 * itself, not the SoC. Expose the chip GPIOs so they can be
-		 * described as gpio-leds (see the ath10k-leds node, to be filled
-		 * once the per-segment chip GPIO numbers are mapped on gpiochip1).
-		 * Requires CONFIG_ATH10K_LEDS in the build.
+		 * The WiFi LED + signal-strength bar are on this radio chip's
+		 * own GPIOs. Expose them as a gpio-controller so they can be
+		 * described as gpio-leds (see the ath10k-leds node).
+		 * Requires CONFIG_ATH10K_LEDS + the gpiochip backport patch.
 		 */
 		#gpio-cells = <2>;
 		gpio-controller;
