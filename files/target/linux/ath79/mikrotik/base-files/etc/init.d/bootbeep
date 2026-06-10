@@ -1,25 +1,60 @@
 #!/bin/sh /etc/rc.common
-# MikroTik-style startup beep for the RouterBOARD Metal 52 ac.
-# The piezo on SoC GPIO line 4 is passive and needs a square wave, so we
-# toggle the line at ~2 kHz for a short moment using gpioset (libgpiod).
-# Requires: gpiod-tools; the gpio-beeper driver must NOT own line 4.
+# Startup tune for the RouterBOARD Metal 52 ac.
+# The piezo on SoC GPIO line 4 is passive, so notes are produced as a precise
+# square wave via gpioset --toggle. The toggle list ends with a "0" period,
+# which makes gpioset emit the final state and exit on its own -- no sleep is
+# used anywhere. Requires gpiod-tools.
+#
+# The waveform is generated from userspace, so during boot (busy CPU) the
+# toggle timing can jitter and the pitch wobbles. Running gpioset with
+# real-time priority (chrt SCHED_FIFO) keeps the timing accurate; it mostly
+# sleeps between edges, so it does not starve the system.
 
 START=99
 STOP=10
 
-beep() {
-	# $1 = duration in seconds (fractional ok), $2 = half-period (e.g. 250us)
-	gpioset -c gpiochip0 --toggle "${2:-250us}" 4=1 >/dev/null 2>&1 &
-	local pid=$!
-	sleep "${1:-0.15}"
-	kill "$pid" 2>/dev/null
-	wait "$pid" 2>/dev/null
+CHIP="gpiochip0"
+PIN=4
+
+# gpioset wrapper with real-time priority when available
+gpio() {
+	if command -v chrt >/dev/null 2>&1; then
+		chrt -f 50 gpioset "$@"
+	elif command -v nice >/dev/null 2>&1; then
+		nice -n -19 gpioset "$@"
+	else
+		gpioset "$@"
+	fi
+}
+
+# play_note <frequency Hz> <duration ms>
+play_note() {
+	local seq
+	seq=$(awk -v f="$1" -v d="$2" 'BEGIN{
+		hp = int(1000000/(f*2));
+		n  = int(f*d/1000);
+		for (i=0; i<n*2; i++) printf "%dus,", hp;
+		print "0"
+	}')
+	gpio -c "$CHIP" --toggle "$seq" ${PIN}=1
+}
+
+# rest <duration ms>
+rest() { gpio -c "$CHIP" --toggle "$(( $1 * 1000 ))us,0" ${PIN}=0; }
+
+play_tune() {
+	local C5=523 E5=659 G5=784 C6=1047 G4=392
+	# rising fanfare: ta-da-da-DAA
+	play_note $G4 100; rest 20
+	play_note $C5 120; rest 20
+	play_note $E5 120; rest 20
+	play_note $G5 120; rest 20
+	play_note $C6 400
 }
 
 start() {
 	. /lib/functions.sh
-	# Only this board has the piezo on gpiochip0 line 4.
 	[ "$(board_name)" = "mikrotik,routerboard-metal-52ac" ] || return 0
-	# two quick beeps; use a single 'beep 0.15 250us' for one long beep
-	beep 0.10 250us; sleep 0.08; beep 0.10 250us
+	sleep 10
+	play_tune
 }
