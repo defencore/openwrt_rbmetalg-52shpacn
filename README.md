@@ -43,8 +43,19 @@ git checkout v25.12.4    # pin to the release, not main
 git clone https://github.com/defencore/openwrt_rbmetalg-52shpacn
 metal_52ac=$(realpath openwrt_rbmetalg-52shpacn/)
 
+
+git checkout -- \
+  target/linux/ath79/image/mikrotik.mk \
+  target/linux/ath79/mikrotik/base-files/etc/hotplug.d/firmware/11-ath10k-caldata \
+  target/linux/ath79/mikrotik/base-files/etc/board.d/01_leds \
+  target/linux/ath79/mikrotik/base-files/etc/board.d/02_network
+find target/linux/ath79 -name '*.rej' -delete
+find target/linux/ath79 -name '*.orig' -delete
+
 # drop-in files (DTS, kernel patch, init scripts, hotplug hook)
 cp -r ${metal_52ac}/files/. .
+
+chmod a+x target/linux/ath79/mikrotik/base-files/etc/init.d/bootbeep
 
 # tree patches (device entry, caldata, LEDs, network)
 for p in ${metal_52ac}/patches/*.patch; do
@@ -52,10 +63,19 @@ for p in ${metal_52ac}/patches/*.patch; do
 done
 ```
 
-Verify the patches applied with no .rej files:
+During the loop `patch` may print warnings like `Hunk #N succeeded ... with
+fuzz 1` or `patch unexpectedly ends in middle of line`. These are harmless:
+`succeeded` means the hunk applied (fuzz = the context shifted a line and
+patch realigned it), and the "middle of line" note only means a patch file
+has no trailing newline. The real success check is that no `.rej` files were
+produced:
 ``` bash
 find . -name '*.rej'
 ```
+This must print nothing. If you need to re-run the loop, first re-do the
+`git checkout -- ...` / `*.rej` cleanup / `cp -r files/.` steps above so the
+patches apply to clean files — otherwise `patch` will detect the already
+applied hunks and prompt to reverse them.
 
 ---
 ## 4. Configure and build
@@ -69,9 +89,13 @@ make menuconfig
 #   Subtarget                -> MikroTik devices
 #   Target Profile           -> MikroTik RouterBOARD Metal 52 ac
 #   Kernel modules  --->
+#     SPI Support  --->
+#       <*> kmod-spi-dev
 #     Wireless Drivers  --->
 #       [*] Enable LED support
 #       < > kmod-ath9k
+#   Utilities  --->
+#     <*> spi-tools
 
 # force the DTB to rebuild after DTS/patch changes
 make target/linux/clean
