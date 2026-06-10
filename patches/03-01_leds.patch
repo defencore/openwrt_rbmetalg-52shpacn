@@ -1,0 +1,12 @@
+--- a/target/linux/ath79/mikrotik/base-files/etc/board.d/01_leds
++++ b/target/linux/ath79/mikrotik/base-files/etc/board.d/01_leds
+@@ -66,6 +66,9 @@
+ 	ucidef_set_led_rssi "rssimediumhigh" "rssimediumhigh" "green:rssimediumhigh" "wlan0" "60" "100"
+ 	ucidef_set_led_rssi "rssihigh" "rssihigh" "green:rssihigh" "wlan0" "80" "100"
+ 	;;
++mikrotik,routerboard-metal-52ac)
++	ucidef_set_led_netdev "eth" "eth" "green:eth" "eth0"
++	;;
+ esac
+ 
+ board_config_flush

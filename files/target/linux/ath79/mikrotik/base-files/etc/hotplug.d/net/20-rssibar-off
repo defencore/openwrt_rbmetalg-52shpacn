@@ -1,0 +1,20 @@
+#!/bin/sh
+# Keep the unused chip RSSI segments off on the Metal 52 ac access point.
+# These LEDs live on the radio chip and can only be driven while the Wi-Fi
+# firmware is ON, so we (re)assert "off" every time the Wi-Fi netdev appears
+# or disappears. Result: only green:eth and green:wlan are ever lit.
+
+. /lib/functions.sh
+[ "$(board_name)" = "mikrotik,routerboard-metal-52ac" ] || exit 0
+
+dev="${INTERFACE:-$DEVICE}"
+case "$dev" in
+	phy0-ap0|phy0-sta0|wlan0) ;;
+	*) exit 0 ;;
+esac
+
+for l in green:rssilow green:rssimediumlow green:rssimedium green:rssihigh; do
+	[ -e "/sys/class/leds/$l/trigger" ]    && echo none > "/sys/class/leds/$l/trigger"
+	[ -e "/sys/class/leds/$l/brightness" ] && echo 0    > "/sys/class/leds/$l/brightness"
+done
+exit 0

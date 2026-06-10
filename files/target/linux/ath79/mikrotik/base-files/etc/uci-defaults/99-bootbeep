@@ -1,0 +1,5 @@
+#!/bin/sh
+# Enable the startup beep service on first boot (persists in overlay,
+# so it then runs on every subsequent boot).
+[ -x /etc/init.d/bootbeep ] && /etc/init.d/bootbeep enable
+exit 0

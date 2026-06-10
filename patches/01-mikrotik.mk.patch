@@ -1,0 +1,19 @@
+--- a/target/linux/ath79/image/mikrotik.mk
++++ b/target/linux/ath79/image/mikrotik.mk
+@@ -202,6 +202,16 @@
+ endef
+ TARGET_DEVICES += mikrotik_routerboard-wap-g-5hact2hnd
+ 
++define Device/mikrotik_routerboard-metal-52ac
++  $(Device/mikrotik_nor)
++  SOC := qca9556
++  DEVICE_MODEL := RouterBOARD Metal 52 ac
++  IMAGE_SIZE := 16256k
++  DEVICE_PACKAGES += kmod-ath10k-smallbuffers ath10k-firmware-qca9887 \
++	rssileds gpiod-tools
++endef
++TARGET_DEVICES += mikrotik_routerboard-metal-52ac
++
+ define Device/mikrotik_routerboard-wapr-2nd
+   $(Device/mikrotik_nor)
+   SOC := qca9533

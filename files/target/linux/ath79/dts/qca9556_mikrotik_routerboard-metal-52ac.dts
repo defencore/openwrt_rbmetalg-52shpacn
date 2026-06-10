@@ -1,0 +1,218 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/*
+ * MikroTik RouterBOARD Metal 52 ac (RBMetalG-52SHPacn)
+ *
+ *   SoC      : Qualcomm Atheros QCA9556 (ath79, mipsbe, 720 MHz)
+ *   RAM      : 64 MB,  Flash: 16 MB SPI NOR
+ *   Ethernet : 1x GbE, AR8033 SGMII PHY on bit-banged MDIO (gpio 11/12)
+ *   WiFi     : single dual-band 1x1 PCIe QCA9887 (ath10k), 2.4 + 5 GHz,
+ *              one chain via external amplifier; SoC wmac unused.
+ *
+ * GPIO map verified live on hardware:
+ *   gpio  1  - reset button (active low)
+ *   gpio  4  - piezo beeper
+ *   gpio 11  - MDIO (bit-banged)
+ *   gpio 12  - MDC  (bit-banged)
+ *   gpio 16  - ethernet status LED (active low: lit when line is low)
+ *   gpio 18  - NOR power/enable: MUST stay high. Driving it low kills SPI
+ *              access to the flash. Held high by gpio-hog below; do NOT use.
+ *
+ * Signal-strength LED bar is NOT on discrete GPIO (shift register / radio
+ * driven) and is therefore not represented here.
+ */
+
+#include "qca955x.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+
+/ {
+	compatible = "mikrotik,routerboard-metal-52ac", "qca,qca9556";
+	model = "MikroTik RouterBOARD Metal 52 ac";
+
+	aliases {
+		mdio-gpio1 = &mdio2;
+	};
+
+	keys {
+		compatible = "gpio-keys";
+
+		reset {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			gpios = <&gpio 1 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		eth {
+			label = "green:eth";
+			gpios = <&gpio 16 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	/*
+	 * LEDs wired to the QCA9887 radio chip's own GPIOs (exposed as the
+	 * "ath10k" gpio-controller). Mapped on the device by sweeping
+	 * gpiochip1: gpio0 = WiFi, gpio1..4 = signal-strength bar (low->high).
+	 * Driving a line low lights the LED, hence GPIO_ACTIVE_LOW.
+	 */
+	ath10k-leds {
+		compatible = "gpio-leds";
+
+		wlan {
+			label = "green:wlan";
+			gpios = <&ath10k 0 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "phy0tpt";
+		};
+
+		rssilow {
+			label = "green:rssilow";
+			gpios = <&ath10k 1 GPIO_ACTIVE_LOW>;
+		};
+
+		rssimediumlow {
+			label = "green:rssimediumlow";
+			gpios = <&ath10k 2 GPIO_ACTIVE_LOW>;
+		};
+
+		rssimedium {
+			label = "green:rssimedium";
+			gpios = <&ath10k 3 GPIO_ACTIVE_LOW>;
+		};
+
+		rssihigh {
+			label = "green:rssihigh";
+			gpios = <&ath10k 4 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	/*
+	 * GPIO 4 is the piezo buzzer. It is passive (needs a square wave to
+	 * make sound), so it is NOT bound to the gpio-beeper driver (which can
+	 * only drive a steady level). The line is left free and driven on
+	 * demand with a ~2 kHz square wave via gpioset (see the bootbeep
+	 * init script / runtime beeps).
+	 */
+
+	mdio2: mdio {
+		compatible = "virtual,mdio-gpio";
+
+		gpios = <&gpio 12 GPIO_ACTIVE_HIGH>, /* MDC */
+			<&gpio 11 GPIO_ACTIVE_HIGH>; /* MDIO */
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		phy0: ethernet-phy@0 {
+			reg = <0>;
+			device_type = "ethernet-phy";
+
+			phy-mode = "sgmii";
+
+			at803x-override-sgmii-link-check;
+		};
+	};
+};
+
+&gpio {
+	/*
+	 * Line 18 enables power to the NOR flash. Hog it high so the kernel
+	 * owns it from init and no userspace request (e.g. a stray gpioset)
+	 * can pull it low and break SPI access to the flash.
+	 */
+	nor_power_hog {
+		gpio-hog;
+		gpios = <18 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "nor-power-enable";
+	};
+};
+
+&eth1 {
+	status = "okay";
+
+	pll-data = <0x03000101 0x80000101 0x80001313>;
+	phy-handle = <&phy0>;
+
+	qca955x-sgmii-fixup;
+
+	gmac-config {
+		device = <&gmac>;
+	};
+};
+
+&spi {
+	status = "okay";
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <40000000>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "RouterBoot";
+				reg = <0x0 0x20000>;
+				compatible = "mikrotik,routerboot-partitions";
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				partition@0 {
+					label = "bootloader1";
+					reg = <0x0 0x0>;
+					read-only;
+				};
+
+				hard_config {
+					read-only;
+				};
+
+				bios {
+					size = <0x1000>;
+					read-only;
+				};
+
+				partition@10000 {
+					label = "bootloader2";
+					reg = <0x10000 0x0>;
+					read-only;
+				};
+
+				soft_config {
+				};
+			};
+
+			partition@20000 {
+				compatible = "mikrotik,minor";
+				label = "firmware";
+				reg = <0x020000 0xfe0000>;
+			};
+		};
+	};
+};
+
+&pcie0 {
+	status = "okay";
+
+	ath10k: wifi@0,0 {
+		compatible = "qcom,ath10k";
+		reg = <0 0 0 0 0>;
+
+		/*
+		 * The signal-strength LED bar is wired to GPIOs of the QCA9887
+		 * itself, not the SoC. Expose the chip GPIOs so they can be
+		 * described as gpio-leds (see the ath10k-leds node, to be filled
+		 * once the per-segment chip GPIO numbers are mapped on gpiochip1).
+		 * Requires CONFIG_ATH10K_LEDS in the build.
+		 */
+		#gpio-cells = <2>;
+		gpio-controller;
+	};
+};

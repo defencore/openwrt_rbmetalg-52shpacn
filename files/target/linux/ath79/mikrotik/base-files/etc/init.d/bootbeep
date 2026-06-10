@@ -1,0 +1,25 @@
+#!/bin/sh /etc/rc.common
+# MikroTik-style startup beep for the RouterBOARD Metal 52 ac.
+# The piezo on SoC GPIO line 4 is passive and needs a square wave, so we
+# toggle the line at ~2 kHz for a short moment using gpioset (libgpiod).
+# Requires: gpiod-tools; the gpio-beeper driver must NOT own line 4.
+
+START=99
+STOP=10
+
+beep() {
+	# $1 = duration in seconds (fractional ok), $2 = half-period (e.g. 250us)
+	gpioset -c gpiochip0 --toggle "${2:-250us}" 4=1 >/dev/null 2>&1 &
+	local pid=$!
+	sleep "${1:-0.15}"
+	kill "$pid" 2>/dev/null
+	wait "$pid" 2>/dev/null
+}
+
+start() {
+	. /lib/functions.sh
+	# Only this board has the piezo on gpiochip0 line 4.
+	[ "$(board_name)" = "mikrotik,routerboard-metal-52ac" ] || return 0
+	# two quick beeps; use a single 'beep 0.15 250us' for one long beep
+	beep 0.10 250us; sleep 0.08; beep 0.10 250us
+}

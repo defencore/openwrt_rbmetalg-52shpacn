@@ -1,0 +1,10 @@
+--- a/target/linux/ath79/mikrotik/base-files/etc/hotplug.d/firmware/11-ath10k-caldata
++++ b/target/linux/ath79/mikrotik/base-files/etc/hotplug.d/firmware/11-ath10k-caldata
+@@ -16,6 +16,7 @@
+ 	mikrotik,routerboard-951ui-2nd|\
+ 	mikrotik,routerboard-952ui-5ac2nd|\
+ 	mikrotik,routerboard-962uigs-5hact2hnt|\
++	mikrotik,routerboard-metal-52ac|\
+ 	mikrotik,routerboard-wap-g-5hact2hnd)
+ 		caldata_sysfsload_from_file $wlan_data 0x5000 0x844
+ 		;;

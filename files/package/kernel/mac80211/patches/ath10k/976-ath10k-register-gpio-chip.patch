@@ -1,0 +1,94 @@
+--- a/drivers/net/wireless/ath/ath10k/leds.c
++++ b/drivers/net/wireless/ath/ath10k/leds.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/leds.h>
++#include <linux/gpio/driver.h>
+ 
+ #include "core.h"
+ #include "wmi.h"
+@@ -53,10 +54,83 @@
+ 	return 0;
+ }
+ 
++/*
++ * Expose the radio chip's own GPIO lines as a gpiochip, driven through the
++ * WMI firmware API (the same primitive the single ath10k-phyN LED uses).
++ * Upstream stripped this from Gottschall's original patch; it is what makes
++ * <&ath10k N> gpio-leds (the MikroTik signal bar) work.
++ */
++static int ath10k_gpio_pin_cfg_output(struct gpio_chip *gc, unsigned int offset,
++				      int value)
++{
++	struct ath10k *ar = gpiochip_get_data(gc);
++
++	mutex_lock(&ar->conf_mutex);
++	if (ar->state == ATH10K_STATE_ON) {
++		ath10k_wmi_gpio_config(ar, offset, 0,
++				       WMI_GPIO_PULL_NONE,
++				       WMI_GPIO_INTTYPE_DISABLE);
++		ath10k_wmi_gpio_output(ar, offset, value);
++	}
++	mutex_unlock(&ar->conf_mutex);
++
++	return 0;
++}
++
++static int ath10k_gpio_pin_cfg_input(struct gpio_chip *gc, unsigned int offset)
++{
++	return -ENOTSUPP;
++}
++
++static int ath10k_gpio_pin_get(struct gpio_chip *gc, unsigned int offset)
++{
++	return 0;
++}
++
++static void ath10k_gpio_pin_set(struct gpio_chip *gc, unsigned int offset,
++				int value)
++{
++	struct ath10k *ar = gpiochip_get_data(gc);
++
++	mutex_lock(&ar->conf_mutex);
++	if (ar->state == ATH10K_STATE_ON) {
++		ath10k_wmi_gpio_config(ar, offset, 0,
++				       WMI_GPIO_PULL_NONE,
++				       WMI_GPIO_INTTYPE_DISABLE);
++		ath10k_wmi_gpio_output(ar, offset, value);
++	}
++	mutex_unlock(&ar->conf_mutex);
++}
++
++static void ath10k_register_gpio_chip(struct ath10k *ar)
++{
++	struct gpio_chip *gc;
++
++	gc = devm_kzalloc(ar->dev, sizeof(*gc), GFP_KERNEL);
++	if (!gc)
++		return;
++
++	gc->label		= "ath10k";
++	gc->parent		= ar->dev;
++	gc->base		= -1;
++	gc->ngpio		= 32;
++	gc->owner		= THIS_MODULE;
++	gc->can_sleep		= true;
++	gc->get			= ath10k_gpio_pin_get;
++	gc->set			= ath10k_gpio_pin_set;
++	gc->direction_input	= ath10k_gpio_pin_cfg_input;
++	gc->direction_output	= ath10k_gpio_pin_cfg_output;
++
++	if (devm_gpiochip_add_data(ar->dev, gc, ar))
++		dev_warn(ar->dev, "failed to register ath10k gpio chip\n");
++}
++
+ int ath10k_leds_register(struct ath10k *ar)
+ {
+ 	int ret;
+ 
++	ath10k_register_gpio_chip(ar);
++
+ 	if (ar->hw_params.led_pin == 0)
+ 		/* leds not supported */
+ 		return 0;
