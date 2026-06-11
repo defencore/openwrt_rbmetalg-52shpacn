@@ -235,10 +235,12 @@
 	 * family tops out at ~2 MHz, so 2 MHz is the usable point.
 	 *
 	 * Enumerates as /dev/spidev0.2. Single-ended control bytes (mode 0),
-	 * shift 3 bytes [ctrl,0,0], result = top 12 bits of the last 2 bytes:
-	 *   0xA7 = VBAT  (input voltage via on-board divider)
-	 *   0x87 / 0xF7 = TEMP0 / TEMP1
-	 *   0xE7 = AUX
+	 * shift 3 bytes [ctrl,0,0], result = top 12 bits of the last 2 bytes.
+	 * What this board actually wires to each ADC channel:
+	 *   0xE7 = AUX          -> INPUT VOLTAGE, via an on-board ~16:1 divider
+	 *   0x87 / 0xF7 = TEMP0 / TEMP1 -> board temperature (internal-diode delta)
+	 *   0xA7 = VBAT         -> the chip's battery-monitor pin; NOT the input
+	 *                          voltage here (not the channel rbmetal-health uses)
 	 */
 	adc@2 {
 		compatible = "rohm,dh2228fv";

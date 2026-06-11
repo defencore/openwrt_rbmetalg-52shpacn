@@ -1,0 +1,120 @@
+#!/bin/sh
+# Health monitor for the MikroTik RouterBOARD Metal 52 ac (RBMetalG-52SHPacn):
+# input voltage and board temperature from the on-board ZT2046Q ADC
+# (ADS7846/XPT2046-compatible 12-bit SPI ADC).
+#
+# Wiring (verified live on hardware + against the stock RouterOS kernel):
+#   - The ADC hangs off the boot SPI bus, sharing SCLK/MOSI/MISO with the NOR
+#     flash; its /CS is the controller's native SPI_CS2 (GPIO pin 17). The DTS
+#     puts it on chip-select 2, so it enumerates as /dev/spidev0.2.
+#   - SPI mode 0, >= 1.875 MHz (AHB 240 MHz / 128 is the ath79 minimum); the
+#     ADS7846 family tops out near 2 MHz, so 2 MHz is the usable point.
+#
+# IMPORTANT: all channels of one reading must be clocked in a SINGLE transfer
+# with /CS held low the whole time. Issuing one spi-pipe call per channel
+# toggles /CS between channels and resets the ADC's sample-and-hold, which
+# makes every channel collapse to the same garbage value. So we send the whole
+# control-byte sequence in one -b N transfer.
+#
+# Channel map on this board (single-ended control bytes, mode 0):
+#   0xE7 = AUX   -> input voltage, via an on-board ~16:1 divider (full scale
+#                  ~40 V against the ADC's 2.5 V internal reference)
+#   0x87 = TEMP0 \  board temperature from the ADC's internal diode, two-point
+#   0xF7 = TEMP1 /  differential (TEMP1 - TEMP0)
+#
+# Calibration:
+#   - Voltage: a two-point linear fit of AUX, measured against bench supplies of
+#     12.0 V (raw 1240) and 24.0 V (raw 2438). Linear through both points to ~1
+#     count, with a small offset, so two points beat a single through-zero scale.
+#   - Temperature: the diode delta (TEMP1 - TEMP0) is proportional to *absolute*
+#     temperature (PTAT), so one reference point sets the whole scale. Confirmed
+#     at two points: ~39 C at delta 213, and ~25 C at delta 203 (both give the
+#     same 312/213 K-per-count slope). The ZT2046Q is an ADS7846 clone whose
+#     diode constants differ from TI's, so do NOT use the datasheet formula;
+#     recalibrate with TEMP_CAL_TK = your_C + 273 at the observed delta.
+
+SPIDEV=/dev/spidev0.2
+SPEED=2000000
+VCAL1_RAW=1240         # AUX counts at ...
+VCAL1_MV=12000         #   ... 12.0 V
+VCAL2_RAW=2438         # AUX counts at ...
+VCAL2_MV=24000         #   ... 24.0 V
+TEMP_CAL_DT=213        # TEMP1 - TEMP0 (counts) at the calibration temperature
+TEMP_CAL_TK=312        # that temperature in kelvin (39 C + 273)
+
+usage() {
+	cat <<EOF
+Usage: rbmetal-health [-j] [-r]
+  (no args)  human-readable voltage and temperature
+  -j         JSON: {"voltage":<V>,"temperature":<C>,"raw":{...}}
+  -r         raw 12-bit channel values only
+EOF
+}
+
+read_adc() {
+	# One CS-low frame: a throwaway TEMP0 conversion, then TEMP0, AUX, TEMP1,
+	# then a flush group. The very first conversion after /CS goes low is
+	# unreliable (the sample-and-hold has not settled), so it is discarded;
+	# the real channels are read from the groups that follow. Returns the
+	# 15 response bytes as space-separated hex.
+	printf '\207\000\000\207\000\000\347\000\000\367\000\000\000\000\000' \
+		| spi-pipe -d "$SPIDEV" -s "$SPEED" -b 15 -n 1 2>/dev/null \
+		| hexdump -v -e '15/1 "%02x "'
+}
+
+main() {
+	local mode="$1"
+
+	[ -c "$SPIDEV" ] || { echo "rbmetal-health: $SPIDEV not found" >&2; exit 1; }
+	command -v spi-pipe >/dev/null 2>&1 || { echo "rbmetal-health: spi-tools missing" >&2; exit 1; }
+
+	# Average a few frames to smooth the +-1 count noise (matters most for the
+	# small TEMP1-TEMP0 delta). Each frame's 12-bit results are the top 12 bits
+	# of the two bytes after each control byte; group 0 is the discarded
+	# throwaway, so TEMP0 = group 1 (bytes 5,6), AUX = group 2 (bytes 8,9),
+	# TEMP1 = group 3 (bytes 11,12).
+	local n=0 st0=0 saux=0 st1=0 t0 aux t1 i=0
+	while [ "$i" -lt 6 ]; do
+		i=$((i + 1))
+		set -- $(read_adc)
+		[ $# -eq 15 ] || continue
+		st0=$(( st0 + (((0x$5 * 256 + 0x$6) >> 3) & 4095) ))
+		saux=$(( saux + (((0x$8 * 256 + 0x$9) >> 3) & 4095) ))
+		st1=$(( st1 + (((0x${11} * 256 + 0x${12}) >> 3) & 4095) ))
+		n=$((n + 1))
+	done
+	[ "$n" -ge 1 ] || { echo "rbmetal-health: ADC read failed" >&2; exit 1; }
+	t0=$(( st0 / n )); aux=$(( saux / n )); t1=$(( st1 / n ))
+
+	# Voltage in millivolts: two-point linear fit through (VCAL1, VCAL2).
+	local vmv
+	vmv=$(( VCAL1_MV + (aux - VCAL1_RAW) * (VCAL2_MV - VCAL1_MV) / (VCAL2_RAW - VCAL1_RAW) ))
+
+	# Temperature: the diode delta is PTAT, so a single calibration point scales
+	# it: T(K) = (TEMP1 - TEMP0) * TEMP_CAL_TK / TEMP_CAL_DT.
+	local dt tc
+	dt=$(( t1 - t0 ))
+	tc=$(( dt * TEMP_CAL_TK / TEMP_CAL_DT - 273 ))
+
+	case "$mode" in
+	-r)
+		echo "TEMP0=$t0 AUX=$aux TEMP1=$t1"
+		;;
+	-j)
+		printf '{"voltage":%d.%02d,"temperature":%d,"raw":{"temp0":%d,"aux":%d,"temp1":%d}}\n' \
+			$((vmv / 1000)) $(((vmv % 1000) / 10)) "$tc" "$t0" "$aux" "$t1"
+		;;
+	-h|--help)
+		usage
+		;;
+	"")
+		printf 'voltage:     %d.%02d V\n' $((vmv / 1000)) $(((vmv % 1000) / 10))
+		printf 'temperature: %d C\n' "$tc"
+		;;
+	*)
+		usage; exit 1
+		;;
+	esac
+}
+
+main "$@"
