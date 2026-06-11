@@ -10,7 +10,7 @@
 +  DEVICE_MODEL := RouterBOARD Metal 52 ac
 +  IMAGE_SIZE := 16256k
 +  DEVICE_PACKAGES += kmod-ath10k-smallbuffers ath10k-firmware-qca9887 \
-+	rssileds gpiod-tools
++	rssileds gpiod-tools kmod-spi-dev spi-tools -kmod-ath9k
 +endef
 +TARGET_DEVICES += mikrotik_routerboard-metal-52ac
 +

@@ -3,10 +3,11 @@
  * MikroTik RouterBOARD Metal 52 ac (RBMetalG-52SHPacn)
  *
  *   SoC      : Qualcomm Atheros QCA9556 (ath79, mipsbe, 720 MHz)
- *   RAM      : 64 MB,  Flash: 16 MB SPI NOR
+ *   RAM      : 64 MB,  Flash: 16 MB SPI NOR (ISSI IS25LP128)
  *   Ethernet : 1x GbE, AR8033 SGMII PHY on bit-banged MDIO (gpio 11/12)
- *   WiFi     : single dual-band 1x1 PCIe QCA9887 (ath10k), 2.4 + 5 GHz,
- *              one chain via external amplifier; SoC wmac unused.
+ *   WiFi     : single dual-band 1x1 PCIe QCA9889 (driven as QCA9887 by
+ *              ath10k), 2.4 + 5 GHz, one chain via external amplifier;
+ *              SoC wmac unused.
  *
  * GPIO map verified live on hardware:
  *   gpio  1  - reset button (active low)
@@ -17,12 +18,22 @@
  *   gpio 18  - NOR power/enable: MUST stay high. Driving it low kills SPI
  *              access to the flash. Held high by gpio-hog below; do NOT use.
  *
- * The WiFi LED and the 4-segment signal-strength bar are wired to the QCA9887
+ * The WiFi LED and the 4-segment signal-strength bar are wired to the QCA9889
  * radio chip's own GPIOs (see the ath10k-leds node), not the SoC.
  *
- * A ZT2046Q (ADS7846/XPT2046-compatible 12-bit SPI ADC) on SPI CS1 provides
- * temperature and input-voltage sensing (see the adc@1 node). It is bound to
- * spidev and read from user space.
+ * SPI bus pinmux (read live from GPIO_OUT_FUNCTION / GPIO_IN_ENABLE0, and
+ * confirmed against the stock RouterOS kernel for this board, code "g52c"):
+ *   pin 5  = SPI_CS0   (NOR flash)
+ *   pin 6  = SPI_CLK   (shared)
+ *   pin 7  = SPI_MOSI  (shared)
+ *   pin 8  = SPI_MISO  (shared; SPI_DATA_IN source in GPIO_IN_ENABLE0)
+ *   pin 17 = SPI_CS2   (the ZT2046Q /CS)
+ * SPI_CS1 is muxed to no pin, so the ADC is on native chip-select 2.
+ *
+ * A ZT2046Q (ADS7846/XPT2046-compatible 12-bit SPI ADC) provides temperature
+ * and input-voltage sensing. It shares SCLK/MOSI/MISO with the boot NOR flash
+ * and hangs off the controller's native SPI_CS2; see the adc@2 node. Read it
+ * from user space via /dev/spidev0.2 (mode 0, >= 1.875 MHz: AHB 240 MHz / 128).
  */
 
 #include "qca955x.dtsi"
@@ -59,7 +70,7 @@
 	};
 
 	/*
-	 * LEDs wired to the QCA9887 radio chip's own GPIOs (exposed as the
+	 * LEDs wired to the QCA9889 radio chip's own GPIOs (exposed as the
 	 * "ath10k" gpio-controller). Mapped on the device by sweeping
 	 * gpiochip1: gpio0 = WiFi, gpio1..4 = signal-strength bar (low->high).
 	 * Driving a line low lights the LED, hence GPIO_ACTIVE_LOW.
@@ -150,7 +161,17 @@
 
 &spi {
 	status = "okay";
-	num-cs = <2>;
+	num-cs = <3>;
+
+	/*
+	 * The ZT2046Q ADC (adc@2) sits on this same SPI bus, sharing
+	 * SCLK/MOSI/MISO with the NOR flash. Its /CS is the controller's native
+	 * SPI_CS2 output, which the bootloader muxes onto GPIO pin 17 (verified
+	 * live via GPIO_OUT_FUNCTION: pin17 = func 0x0b = SPI_CS2). SPI_CS1 is
+	 * muxed to no pin, so num-cs must be 3 to reach CS2; the ath79 SPI
+	 * controller drives all three native chip-selects (CS0/CS1/CS2) via its
+	 * IOC register, so no cs-gpios are needed.
+	 */
 
 	flash@0 {
 		compatible = "jedec,spi-nor";
@@ -203,17 +224,25 @@
 	};
 
 	/*
-	 * ZT2046Q (ADS7846/XPT2046-compatible 12-bit SPI ADC) used by the board
-	 * for temperature and input-voltage sensing. It sits on the second SPI
-	 * chip-select (CS1). The PENIRQ/pendown line is not wired (the chip is
-	 * used only for sensing, not touch), so the in-kernel ads7846 driver is
-	 * not usable here; instead expose it via spidev and read it from user
-	 * space. The "rohm,dh2228fv" compatible is the conventional way to bind
-	 * spidev to a node without a dedicated driver.
+	 * ZT2046Q (ADS7846/XPT2046-compatible 12-bit SPI ADC): temperature and
+	 * input-voltage sensing on native chip-select 2 (SPI_CS2 -> pin 17).
+	 * Bound to spidev (read from user space) rather than the ads7846 driver,
+	 * because ads7846 needs a PENIRQ/pendown interrupt that is not wired on
+	 * this board. "rohm,dh2228fv" is the conventional spidev compatible.
+	 *
+	 * spi-max-frequency must stay >= AHB/128 = 1.875 MHz (240 MHz AHB) or the
+	 * ath79 clock divider overflows ("spi clock is too low"); the ADS7846
+	 * family tops out at ~2 MHz, so 2 MHz is the usable point.
+	 *
+	 * Enumerates as /dev/spidev0.2. Single-ended control bytes (mode 0),
+	 * shift 3 bytes [ctrl,0,0], result = top 12 bits of the last 2 bytes:
+	 *   0xA7 = VBAT  (input voltage via on-board divider)
+	 *   0x87 / 0xF7 = TEMP0 / TEMP1
+	 *   0xE7 = AUX
 	 */
-	adc@1 {
+	adc@2 {
 		compatible = "rohm,dh2228fv";
-		reg = <1>;
+		reg = <2>;
 		spi-max-frequency = <2000000>;
 	};
 };
